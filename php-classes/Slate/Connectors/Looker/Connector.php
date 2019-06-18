@@ -33,6 +33,12 @@ class Connector extends AbstractConnector implements ISynchronize
         User::class => []
     ];
 
+    public static $rolesByAccountLevel = [];
+    public static $rolesByAccountType = [
+        Student::class => [],
+        User::class => []
+    ];
+
     // workflow implementations
     protected static function _getJobConfig(array $requestData)
     {
@@ -173,8 +179,24 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
 
-            static::syncUserGroups($User, $lookerUser, $logger, $pretend);
-#            static::syncUserRoles($User, $lookerUser['role_ids'], $Job, $pretend);
+            // sync groups
+            try {
+                $groupSyncResult = static::syncUserGroups($User, $lookerUser, $logger, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
+            // sync roles
+            try {
+                $rolesSyncResult = static::syncUserRoles($User, $lookerUser, $logger, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
             // static::syncUserCustomAttributes($User, $lookerUser);
 
             // check for custom attributes
@@ -228,8 +250,25 @@ class Connector extends AbstractConnector implements ISynchronize
                     ]
                 );
 
+            // sync groups
+            try {
             $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
-#            static::syncUserRoles($User, $lookerUser['role_ids'], $Job, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
+            // sync roles
+            try {
+                static::syncUserRoles($User, [], $logger, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
+
             // static::syncUserCustomAttributes($User, $lookerUser);
 
             return new SyncResult(
@@ -246,8 +285,76 @@ class Connector extends AbstractConnector implements ISynchronize
         }
     }
 
-    protected static function syncUserRoles(IPerson $User, LoggerInterface $logger = null, $roleIds = [], $pretend = true)
+    protected static function getUserRoles(IPerson $User)
     {
+        $roleIds = [];
+        if (isset(static::$groupsByAccountLevel[$User->AccountLevel])) {
+            $roleIds = array_merge($roleIds, static::$rolesByAccountLevel[$User->AccountLevel]);
+        }
+
+        if (isset(static::$groupsByAccountType[$User->Class])) {
+            $roleIds = array_merge($roleIds, static::$rolesByAccountType[$User->Class]);
+        }
+        return $roleIds;
+    }
+
+    protected static function syncUserRoles(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
+    {
+        $roleIds = $lookerUser['role_ids'];
+        $userRoles = static::getUserRoles($User);
+
+        $logger->debug(
+            'Analyzing user roles: [{roleIds}]',
+            [
+                'roleIds' => join(',', $roleIds)
+            ]
+        );
+
+        if ($rolesToAdd = array_diff($userRoles, $roleIds)) {
+            $logger->notice(
+                'Updating {slateUsername} roles to: [{userRoles}]',
+                [
+                    'slateUsername' => $User->Username,
+                    'userRoles' => join(',', array_unique(array_merge($userRoles, $roleIds)))
+                ]
+            );
+
+            if (!$pretend) {
+                $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
+
+                if (empty($lookerResponse['role_ids']) || array_diff($lookerResponse['role_ids'], $rolesToAdd)) {
+                    return new SyncException(
+                        'Unable to sync user roles.',
+                        [
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
+                }
+
+                $logger->notice(
+                    'User roles successfully synced.',
+                    [
+                        'lookerResponse' => $lookerResponse
+                    ]
+                );
+            }
+        } else {
+            \MICS::dump([$userRoles, $roleIds], 'roles');
+            $logger->debug(
+                'User roles verified',
+                [
+                    'userRoles' => $roleIds
+                ]
+            );
+        }
+
+        return new SyncResult(
+            empty($rolesToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
+            'Successfully synced user roles with Looker',
+            [
+                'lookerResponse' => $looekrResponse
+            ]
+        );
     }
 
     protected static function getUserGroups(IPerson $User)
@@ -276,17 +383,12 @@ class Connector extends AbstractConnector implements ISynchronize
 
         if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
             $logger->notice(
-                'Updating user groups to: [{userGroups}]',
+                'Updating {slateUsername} groups to: [{userGroups}]',
                 [
+                    'slateUsername' => $User->Username,
                     'userGroups' => join(',', array_unique(array_merge($userGroups, $groupIds)))
                 ]
             );
-
-            if ($pretend) {
-                $logger->notice(
-                    'Synced user groups successfully'
-                );
-            }
 
             // sync user groups via API
             foreach ($groupsToAdd as $groupId) {
