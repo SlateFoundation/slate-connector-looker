@@ -22,15 +22,19 @@ class API
             throw new \Exception('Looker API clientSecret must be configured.');
         }
 
-        $response = static::post('login', [
+        $response = static::request('login', [
+            'post' => [
             'client_id' => static::$clientId,
-            'client_secret' => static::$clientSecret
-        ], [
+                'client_secret' => static::$clientSecret,
+                'encode' => false
+            ],
             'skipAuth' => true
         ]);
 
         if (isset($response['access_token'])) {
             static::$accessToken = $response['access_token'];
+        } else {
+            throw new \Exception('Unable to retrieve access_token from Looker.');
         }
     }
 
