@@ -47,7 +47,7 @@ class Connector extends AbstractConnector implements ISynchronize
             return static::throwError('Cannot execute job, clientId not provided');
         }
 
-        if (empty($Job->Config['clientSec'])) {
+        if (empty($Job->Config['clientSecret'])) {
             return static::throwError('Cannot execute job, clientSecret not provided');
         }
 
