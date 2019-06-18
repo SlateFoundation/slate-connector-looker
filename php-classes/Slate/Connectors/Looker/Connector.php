@@ -6,6 +6,7 @@ use Psr\Log\LogLevel;
 use Psr\Log\LoggerInterface;
 
 use Slate;
+use Slate\People\Student;
 
 use Looker\API AS LookerAPI;
 
@@ -16,6 +17,7 @@ use Emergence\Connectors\Mapping;
 use Emergence\Connectors\Exceptions\SyncException;
 use Emergence\Connectors\SyncResult;
 
+use Emergence\People\IPerson;
 use Emergence\People\User;
 use Emergence\People\ContactPoint\Email AS EmailContactPoint;
 use Emergence\Util\Data AS DataUtil;
@@ -24,6 +26,12 @@ class Connector extends AbstractConnector implements ISynchronize
 {
     public static $title = 'Looker';
     public static $connectorId = 'looker';
+
+    public static $groupsByAccountLevel = [];
+    public static $groupsByAccountType = [
+        Student::class => [],
+        User::class => []
+    ];
 
     // workflow implementations
     protected static function _getJobConfig(array $requestData)
@@ -122,7 +130,7 @@ class Connector extends AbstractConnector implements ISynchronize
             $changes = [];
             $lookerUserChanges = [];
 
-            if ($lookerUser['first_name'] != $User->PreferredName ?: $User->FirstName) {
+            if ($lookerUser['first_name'] != ($User->PreferredName ?: $User->FirstName)) {
                 $lookerUserChanges['user[first_name]'] = [
                     'from' => $lookerUser['first_name'],
                     'to' => $User->PreferredName ?: $User->Firstname
@@ -165,13 +173,9 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
 
-            // if (array_diff($lookerUser['group_ids'], array_keys(static::getUserGroups()))) {
-            //     // add missing group ids
-            // }
-
-            // if (array_diff($lookerUser['group_ids'], array_keys(static::getUserGroups()))) {
-            //     // add missing group ids
-            // }
+            static::syncUserGroups($User, $lookerUser, $logger, $pretend);
+#            static::syncUserRoles($User, $lookerUser['role_ids'], $Job, $pretend);
+            // static::syncUserCustomAttributes($User, $lookerUser);
 
             // check for custom attributes
 
@@ -195,69 +199,136 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
 
-            if ($pretend) {
-                $logger->notice(
-                    'Created Looker user for {slateUsername}',
-                    [
-                        'slateUsername' => $User->Username
-                    ]
-                );
-
-                return new SyncResult(
-                    SyncResult::STATUS_CREATED,
-                    'Created Looker user for {slateUsername}, saved mapping to new Looker user (pretend-mode)',
-                    [
-                        'slateUsername' => $User->Username
-                    ]
-                );
-            }
-
+            if (!$pretend) {
             $lookerResponse = LookerAPI::createUser([
                 'first_name' => $User->FirstName,
                 'last_name' => $User->LastName,
-                'email' => $User->PrimaryEmail
+                    'email' => $User->PrimaryEmail->toString()
             ]);
 
-            $logger->notice(
-                'Created Looker user for {slateUsername}',
+                if (empty($lookerResponse['id'])) {
+                    throw new SyncException(
+                        'Failed to create Looker user for {slateUsername}',
                 [
                     'slateUsername' => $User->Username,
                     'lookerResponse' => $lookerResponse
                 ]
             );
+                }
 
-            if (!empty($lookerResponse['id'])) {
                 $mappingData['ExternalIdentifier'] = $lookerResponse['id'];
                 Mapping::create($mappingData, true);
-
-                return new SyncResult(
-                    SyncResult::STATUS_CREATED,
-                    'Created Looker user for {slateUsername}, saved mapping to new Looker user #{lookerUserId}',
-                    [
-                        'slateUsername' => $User->Username,
-                        'lookerUserId' => $lookerResponse['id']
-                    ]
-                );
-            } else {
-                throw new SyncException(
-                    'Failed to create Looker user for {slateUsername}',
-                    [
-                        'slateUsername' => $User->Username,
-                        'lookerResponse' => $lookerResponse
-                    ]
-                );
             }
+
+            $logger->notice(
+                'Created Looker user for {slateUsername}',
+                    [
+                        'slateUsername' => $User->Username,
+                    'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
+                    ]
+                );
+
+            $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
+#            static::syncUserRoles($User, $lookerUser['role_ids'], $Job, $pretend);
+            // static::syncUserCustomAttributes($User, $lookerUser);
+
+            return new SyncResult(
+                SyncResult::STATUS_CREATED,
+                'Created Looker user for {slateUsername}, saved mapping to new Looker user #{lookerUserId}',
+                    [
+                        'slateUsername' => $User->Username,
+                    'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
+                    'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
+                    ]
+                );
+
+
         }
     }
 
     protected static function syncUserRoles(IPerson $User, LoggerInterface $logger = null, $roleIds = [], $pretend = true)
     {
-
     }
 
-    protected static function syncUserGroups(IPerson $User, LoggerInterface $logger = null, $groupIds = [], $pretend = true)
+    protected static function getUserGroups(IPerson $User)
     {
+        $groupIds = [];
+        if (isset(static::$groupsByAccountLevel[$User->AccountLevel])) {
+            $groupIds = array_merge($groupIds, static::$groupsByAccountLevel[$User->AccountLevel]);
+        }
 
+        if (isset(static::$groupsByAccountType[$User->Class])) {
+            $groupIds = array_merge($groupIds, static::$groupsByAccountType[$User->Class]);
+        }
+        return $groupIds;
+    }
+
+    protected static function syncUserGroups(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
+    {
+        $groupIds = $lookerUser['group_ids'];
+        $userGroups = array_values(static::getUserGroups($User));
+        $logger->debug(
+            'Analyzing user groups: [{groupIds}]',
+            [
+                'groupIds' => join(',', $groupIds)
+            ]
+        );
+
+        if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
+            $logger->notice(
+                'Updating user groups to: [{userGroups}]',
+                [
+                    'userGroups' => join(',', array_unique(array_merge($userGroups, $groupIds)))
+                ]
+            );
+
+            if ($pretend) {
+                $logger->notice(
+                    'Synced user groups successfully'
+                );
+            }
+
+            // sync user groups via API
+            foreach ($groupsToAdd as $groupId) {
+                if ($pretend) {
+                    $logger->notice(
+                        'Adding user to group with ID: {groupId}',
+                        [
+                            'groupId' => $groupId
+                        ]
+                    );
+                    continue;
+                }
+
+                $lookerResponse = LookerAPI::addUserToGroup($lookerUser['id'], $groupId);
+
+                if (!empty($lookerResponse['group_ids']) && in_array($groupId, $lookerResponse['group_ids'])) {
+                    $logger->notice(
+                        'Ådded user to group with ID: {groupId}',
+                        [
+                            'lookerResponse' => $lookerResponse,
+                            'groupId' => $groupId
+                        ]
+                    );
+                } else {
+                    $logger->notice(
+                        'Error adding user to group with ID: {groupId}',
+                        [
+                            'groupId' => $groupId,
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
+                }
+            }
+
+            return new SyncResult(
+                empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
+                'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+                [
+                    'slateUsername' => $User->Username
+                ]
+            );
+        }
     }
 
     protected static function syncUserCustomAttributes(IPerson $User, LoggerInterface $logger = null, $customAttributes = [], $pretend = true)
