@@ -82,9 +82,9 @@ class API
         return $user;
     }
 
-    public static function patchUser($userId, $data = [])
+    public static function updateUser($userId, $data = [])
     {
-        \MICS::dump($data, $userId, true);
+        \MICS::dump($data, $userId);
         return static::post('users/'.$userId, $data);
     }
     // https://building21.looker.com:19999/api-docs/index.html#!/3.1/User/set_user_roles
@@ -93,9 +93,15 @@ class API
         return static::put('users/'.$userId.'/roles', $data);
     }
 
-    public static function updateUserGroups($userId, $data = [])
+    public static function addUserToGroup($userId, $groupId)
     {
-        return static::put('users/'.$userId.'/groups', $data);
+        $endpoint = 'groups/';
+        $endpoint .= $groupId;
+        $endpoint .= '/users';
+
+        return static::post($endpoint, [
+            'user_id' => $userId
+        ]);
     }
 
     public static function get($endpoint, $options = [])
@@ -105,16 +111,20 @@ class API
 
     public static function post($endpoint, $data = [], $options = [])
     {
-        return static::request($endpoint, array_merge([
-            'post' => $data
-        ], $options));
+        $requestOptions = array_merge_recursive([
+            'post' => array_merge([
+                'encode' => true
+            ], $data)
+        ], $options);
+
+        return static::request($endpoint, $requestOptions);
     }
 
     public static function put($endpoint, $data = [], $options = [])
     {
         return static::request($endpoint, array_merge([
             'method' => 'PUT',
-            'post' => $data
+            'post' => array_merge(['encode' => true], $data)
         ], $options));
     }
 
@@ -180,17 +190,15 @@ class API
 
         // configure method and body
         if (!empty($options['post'])) {
-            $encodeData = $options['post']['encode'];
+            $encode = !empty($options['post']['encode']);
             unset($options['post']['encode']);
 
-            $postData = !empty($encodeData) ? json_encode($options['post']) : $options['post'];
             if (empty($options['method']) || $options['method'] == 'POST') {
                 curl_setopt($ch, CURLOPT_POST, true);
             } else {
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $options['method']);
             }
-
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $encode ? json_encode($options['post']) : $options['post']);
         }
 
         // configure headers
