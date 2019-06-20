@@ -101,6 +101,16 @@ class API
         ]);
     }
 
+    public static function getUserCustomAttributes($userId)
+    {
+        return static::get('users/'.$userId.'/attribute_values');
+    }
+
+    public static function updateUserCustomAttribute($userId, $attributeId, $attributeData)
+    {
+        return static::patch('users/'.$userId.'/attribute_values/'.$attributeId, $attributeData);
+    }
+
     public static function get($endpoint, $options = [])
     {
         return static::request($endpoint, $options);
@@ -121,6 +131,14 @@ class API
     {
         return static::request($endpoint, array_merge([
             'method' => 'PUT',
+            'post' => array_merge(['encode' => true], $data)
+        ], $options));
+    }
+
+    public static function patch($endpoint, $data = [], $options = [])
+    {
+        return static::request($endpoint, array_merge([
+            'method' => 'PATCH',
             'post' => array_merge(['encode' => true], $data)
         ], $options));
     }

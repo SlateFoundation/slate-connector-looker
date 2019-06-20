@@ -39,6 +39,9 @@ class Connector extends AbstractConnector implements ISynchronize
         User::class => []
     ];
 
+    public static $customAttributesByType = [
+    ];
+
     // workflow implementations
     protected static function _getJobConfig(array $requestData)
     {
@@ -197,10 +200,15 @@ class Connector extends AbstractConnector implements ISynchronize
                     $e->getContext()
                 );
             }
-            // static::syncUserCustomAttributes($User, $lookerUser);
-
-            // check for custom attributes
-
+            // sync custom attributes
+            try {
+                $customAttributesSyncResult = static::syncUserCustomAttributes($User, $lookerUser, $logger, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
 
             return new SyncResult(
                 !empty($changes) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
@@ -268,8 +276,15 @@ class Connector extends AbstractConnector implements ISynchronize
                     $e->getContext()
                 );
             }
-
-            // static::syncUserCustomAttributes($User, $lookerUser);
+            // sync custom attributes
+            try {
+                $customAttributesSyncResult = static::syncUserCustomAttributes($User, $lookerResponse, $logger, $pretend);
+            } catch (SyncException $e) {
+                $logger->error(
+                    $e->getInterpolatedMessage(),
+                    $e->getContext()
+                );
+            }
 
             return new SyncResult(
                 SyncResult::STATUS_CREATED,
@@ -432,9 +447,95 @@ class Connector extends AbstractConnector implements ISynchronize
         }
     }
 
-    protected static function syncUserCustomAttributes(IPerson $User, LoggerInterface $logger = null, $customAttributes = [], $pretend = true)
+    protected static function getUserCustomAttributes(IPerson $User)
     {
+        $customAttributes = [];
 
+        if (isset(static::$customAttributesByType[$User->Class])) {
+            $customAttributesByType = static::$customAttributesByType[$User->Class];
+            foreach ($customAttributesByType as $customAttributeId => $customAttributeMapping) {
+                if (isset($customAttributeMapping['getter'])) {
+                    $customAttributes[$customAttributeId] = $User->getValue($customAttributeMapping['getter']);
+                } else if (isset($customAttributeMapping['value'])) {
+                    $customAttributes[$customAttributeId] = $customAttributeMapping['value'];
+                }
+            }
+        }
+
+        return $customAttributes;
+    }
+
+    protected static function syncUserCustomAttributes(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
+    {
+        $userCustomAttributes = static::getUserCustomAttributes($User);
+        $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
+        $customAttributesToAdd = [];
+
+        foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
+            if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
+                continue;
+            }
+
+            if ($lookerCustomAttribute['value'] != $userCustomAttributes[$lookerCustomAttribute['name']]) {
+                $customAttributesToAdd[$lookerCustomAttribute['user_attribute_id']] = [
+                    'name' => $lookerCustomAttribute['name'],
+                    'value' => $userCustomAttributes[$lookerCustomAttribute['name']]
+                ];
+            }
+        }
+
+        if (empty($customAttributesToAdd)) {
+            $logger->debug('User Custom Attributes verified');
+            return new SyncResult(
+                SyncResult::STATUS_VERIFIED,
+                'User custome attributes have been verified.',
+                [
+                    'lookerUserAttributes' => $currentUserCustomAttributes
+                ]
+            );
+        } else {
+            $logger->debug('Syncing user custom attributes for {slateUsername}', [
+                'slateUsername' => $User->Username,
+                'attributesToSet' => $customAttributesToAdd
+            ]);
+
+            if (!$pretend) {
+                foreach ($customAttributesToAdd as $customAttributeId => $customAttributeToAdd) {
+                    $lookerResponse = LookerAPI::updateUserCustomAttribute($lookerUser['id'], $customAttributeId, $customAttributeToAdd);
+
+                    if ($lookerResponse['value'] != $customAttributeToAdd['value']) {
+                        \MICS::dump($lookerResponse, 'looker response');
+                        $logger->error(
+                            'Error updating user Custom Attribute {customAttributeName} => {customAttributeValue}',
+                            [
+                                'customAttributeName' => $customAttributeToAdd['name'],
+                                'customAttributeValue' => $customAttributeToAdd['value'],
+                                'lookerResponse' => $lookerResponse
+                            ]
+                        );
+                        continue;
+                    }
+
+                    $logger->debug(
+                        'Synced user Custom Attribute {customAttributeName} => {customAttributeValue}',
+                        [
+                            'customAttributeName' => $customAttributeToAdd['name'],
+                            'customAttributeValue' => $customAttributeToAdd['value'],
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
+                }
+            }
+
+            return new SyncResult(
+                SyncResult::STATUS_UPDATED,
+                'User custom attributes have been updated.' . ($pretend ? '(pretend-mode)' : ''),
+                [
+                    'previousAttributes' => $currentUserCustomAttributes,
+                    'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
+                ]
+            );
+        }
     }
 
     // task handlers
