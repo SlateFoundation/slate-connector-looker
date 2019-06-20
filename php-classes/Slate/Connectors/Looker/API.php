@@ -76,10 +76,7 @@ class API
 
     public static function createUser(array $data)
     {
-        \MICS::dump($data, 'createUser');
-        $user = static::post('users', $data);
-        \MICS::dump($user, 'created user');
-        return $user;
+        return static::post('users', $data);
     }
 
     public static function updateUser($userId, $data = [])

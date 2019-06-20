@@ -339,7 +339,6 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
         } else {
-            \MICS::dump([$userRoles, $roleIds], 'roles');
             $logger->debug(
                 'User roles verified',
                 [
