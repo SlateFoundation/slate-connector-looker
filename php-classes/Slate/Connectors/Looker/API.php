@@ -12,20 +12,23 @@ class API
     public static $clientSecret;
     protected static $accessToken;
 
-    public static function login()
+    public static function login($clientId = null, $clientSecret = null)
     {
-        if (!static::$clientId) {
+        $clientId = $clientId ?: static::$clientId;
+        $clientSecret = $clientSecret ?: static::$clientSecret;
+
+        if (!$clientId) {
             throw new \Exception('Looker API clientId must be configured.');
         }
 
-        if (!static::$clientSecret) {
+        if (!$clientSecret) {
             throw new \Exception('Looker API clientSecret must be configured.');
         }
 
         $response = static::request('login', [
             'post' => [
-            'client_id' => static::$clientId,
-                'client_secret' => static::$clientSecret,
+                'client_id' => $clientId,
+                'client_secret' => $clientSecret,
                 'encode' => false
             ],
             'skipAuth' => true

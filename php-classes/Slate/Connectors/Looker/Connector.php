@@ -70,9 +70,11 @@ class Connector extends AbstractConnector implements ISynchronize
 
 
         // configure API wrapper
-        LookerAPI::$clientId = $Job->Config['clientId'];
-        LookerAPI::$clientSecret = $Job->Config['clientSecret'];
-
+        try {
+            LookerAPI::login($Job->Config['clientId'], $Job->Config['clientSecret']);
+        } catch (\Exception $e) {
+            return static::throwError($e->getMessage());
+        }
 
         // update job status
         $Job->Status = 'Pending';
