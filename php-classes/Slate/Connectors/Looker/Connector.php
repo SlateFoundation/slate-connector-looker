@@ -12,7 +12,7 @@ use Looker\API AS LookerAPI;
 
 use Emergence\Connectors\AbstractConnector;
 use Emergence\Connectors\ISynchronize;
-use Emergence\Connectors\Job;
+use Emergence\Connectors\IJob;
 use Emergence\Connectors\Mapping;
 use Emergence\Connectors\Exceptions\SyncException;
 use Emergence\Connectors\SyncResult;
@@ -54,7 +54,7 @@ class Connector extends AbstractConnector implements ISynchronize
         return $config;
     }
 
-    public static function synchronize(Job $Job, $pretend = true)
+    public static function synchronize(IJob $Job, $pretend = true)
     {
         if ($Job->Status != 'Pending' && $Job->Status != 'Completed') {
             return static::throwError('Cannot execute job, status is not Pending or Complete');
@@ -541,7 +541,7 @@ class Connector extends AbstractConnector implements ISynchronize
     }
 
     // task handlers
-    public static function pushUsers(Job $Job, $pretend = true)
+    public static function pushUsers(IJob $Job, $pretend = true)
     {
         // initialize results
         $results = [
