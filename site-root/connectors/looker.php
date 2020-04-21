@@ -1,3 +1,3 @@
 <?php
 
-\Emergence\Looker\Connector::handleRequest();
+\Slate\Connectors\Looker\Connector::handleRequest();
