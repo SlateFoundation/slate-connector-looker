@@ -1,6 +1,6 @@
 <?php
 
-namespace Looker;
+namespace Slate\Connectors\Looker;
 
 class API
 {

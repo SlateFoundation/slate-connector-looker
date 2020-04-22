@@ -8,7 +8,7 @@ use Psr\Log\LoggerInterface;
 use Slate;
 use Slate\People\Student;
 
-use Looker\API AS LookerAPI;
+use Slate\Connectors\Looker\API AS LookerAPI;
 
 use Emergence\Connectors\AbstractConnector;
 use Emergence\Connectors\ISynchronize;
@@ -232,24 +232,26 @@ class Connector extends AbstractConnector implements ISynchronize
             }
 
             if (!$pretend) {
-            $lookerResponse = LookerAPI::createUser([
-                'first_name' => $User->FirstName,
-                'last_name' => $User->LastName,
-                    'email' => $User->PrimaryEmail->toString()
-            ]);
+                $lookerResponse = LookerAPI::createUser([
+                    'first_name' => $User->FirstName,
+                    'last_name' => $User->LastName,
+                        'email' => $User->PrimaryEmail->toString()
+                ]);
 
                 if (empty($lookerResponse['id'])) {
                     throw new SyncException(
                         'Failed to create Looker user for {slateUsername}',
-                [
-                    'slateUsername' => $User->Username,
-                    'lookerResponse' => $lookerResponse
-                ]
-            );
+                        [
+                            'slateUsername' => $User->Username,
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
                 }
 
                 $mappingData['ExternalIdentifier'] = $lookerResponse['id'];
                 Mapping::create($mappingData, true);
+            } else {
+                $lookerResponse = [];
             }
 
             $logger->notice(
@@ -262,7 +264,7 @@ class Connector extends AbstractConnector implements ISynchronize
 
             // sync groups
             try {
-            $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
+                $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -317,7 +319,7 @@ class Connector extends AbstractConnector implements ISynchronize
 
     protected static function syncUserRoles(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
-        $roleIds = $lookerUser['role_ids'];
+        $roleIds = $lookerUser['role_ids'] ?: [];
         $userRoles = static::getUserRoles($User);
 
         $logger->debug(
@@ -388,7 +390,7 @@ class Connector extends AbstractConnector implements ISynchronize
 
     protected static function syncUserGroups(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
-        $groupIds = $lookerUser['group_ids'];
+        $groupIds = $lookerUser['group_ids'] ?: [];
         $userGroups = array_values(static::getUserGroups($User));
         $logger->debug(
             'Analyzing user groups: [{groupIds}]',
@@ -470,19 +472,26 @@ class Connector extends AbstractConnector implements ISynchronize
     protected static function syncUserCustomAttributes(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
         $userCustomAttributes = static::getUserCustomAttributes($User);
-        $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
         $customAttributesToAdd = [];
 
-        foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
-            if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
-                continue;
-            }
+        if (!empty($lookerUser)) {
+            $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
+        } else {
+            $currentUserCustomAttributes = [];
+        }
 
-            if ($lookerCustomAttribute['value'] != $userCustomAttributes[$lookerCustomAttribute['name']]) {
-                $customAttributesToAdd[$lookerCustomAttribute['user_attribute_id']] = [
-                    'name' => $lookerCustomAttribute['name'],
-                    'value' => $userCustomAttributes[$lookerCustomAttribute['name']]
-                ];
+        if (!empty($currentUserCustomAttributes)) {
+            foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
+                if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
+                    continue;
+                }
+
+                if ($lookerCustomAttribute['value'] != $userCustomAttributes[$lookerCustomAttribute['name']]) {
+                    $customAttributesToAdd[$lookerCustomAttribute['user_attribute_id']] = [
+                        'name' => $lookerCustomAttribute['name'],
+                        'value' => $userCustomAttributes[$lookerCustomAttribute['name']]
+                    ];
+                }
             }
         }
 
