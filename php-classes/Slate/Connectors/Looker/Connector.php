@@ -187,9 +187,14 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
 
+
+            $userUpdated = false;
             // sync groups
             try {
                 $groupSyncResult = static::syncUserGroups($User, $lookerUser, $logger, $pretend);
+                if ($groupSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -199,6 +204,9 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync roles
             try {
                 $rolesSyncResult = static::syncUserRoles($User, $lookerUser, $logger, $pretend);
+                if ($rolesSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -208,6 +216,9 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync custom attributes
             try {
                 $customAttributesSyncResult = static::syncUserCustomAttributes($User, $lookerUser, $logger, $pretend);
+                if ($customAttributesSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -216,7 +227,7 @@ class Connector extends AbstractConnector implements ISynchronize
             }
 
             return new SyncResult(
-                !empty($changes) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
+                (!empty($changes) || !empty($userUpdated)) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
                 'Looker account for {slateUsername} found and verified up-to-date.',
                 [
                     'slateUsername' => $User->Username
