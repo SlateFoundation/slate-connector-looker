@@ -305,8 +305,8 @@ class Connector extends AbstractConnector implements ISynchronize
                 'Created Looker user for {slateUsername}, saved mapping to new Looker user #{lookerUserId}',
                     [
                         'slateUsername' => $User->Username,
-                    'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
-                    'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
+                        'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
+                        'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
                 );
 
@@ -326,7 +326,7 @@ class Connector extends AbstractConnector implements ISynchronize
         }
 
         if (isset(static::$rolesByUser) && is_callable(static::$rolesByUser)) {
-            $roleIds = array_merge($roleIds, call_user_func([static::class, 'rolesByUser'], $User));
+            $roleIds = array_merge($roleIds, call_user_func(static::$rolesByUser, $User));
         }
 
         return $roleIds;
@@ -402,7 +402,7 @@ class Connector extends AbstractConnector implements ISynchronize
         }
 
         if (isset(static::$groupsByUser) && is_callable(static::$groupsByUser)) {
-            $groupIds = array_merge($groupIds, call_user_func([static::class, 'groupsByUser'], $User));
+            $groupIds = array_merge($groupIds, call_user_func(static::$groupsByUser, $User));
         }
         return $groupIds;
     }
@@ -486,7 +486,7 @@ class Connector extends AbstractConnector implements ISynchronize
         }
 
         if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
-            $customAttributes = array_merge($customAttributes, call_user_func([static::class, 'customAttributesByUser'], $User));
+            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User));
         }
 
         return $customAttributes;
