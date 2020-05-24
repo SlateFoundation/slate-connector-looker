@@ -245,7 +245,7 @@ class Connector extends AbstractConnector implements ISynchronize
                 $lookerResponse = LookerAPI::createUser([
                     'first_name' => $User->FirstName,
                     'last_name' => $User->LastName,
-                        'email' => $User->PrimaryEmail->toString()
+                    'email' => $User->PrimaryEmail->toString()
                 ]);
 
                 if (empty($lookerResponse['id'])) {
@@ -268,7 +268,7 @@ class Connector extends AbstractConnector implements ISynchronize
                 'Created Looker user for {slateUsername}',
                     [
                         'slateUsername' => $User->Username,
-                    'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
+                        'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
                 );
 
@@ -345,7 +345,7 @@ class Connector extends AbstractConnector implements ISynchronize
         );
 
         if ($rolesToAdd = array_diff($userRoles, $roleIds)) {
-            $logger->notice(
+            $logger->debug(
                 'Updating {slateUsername} roles to: [{userRoles}]',
                 [
                     'slateUsername' => $User->Username,
@@ -357,6 +357,11 @@ class Connector extends AbstractConnector implements ISynchronize
                 $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
 
                 if (empty($lookerResponse['role_ids']) || array_diff($lookerResponse['role_ids'], $rolesToAdd)) {
+                    $logger->error('Error syncing user roles', [
+                        'lookerResponse' => $lookerResponse,
+                        'rolesToAdd' => $rolesToAdd
+                    ]);
+
                     return new SyncException(
                         'Unable to sync user roles.',
                         [
@@ -365,7 +370,7 @@ class Connector extends AbstractConnector implements ISynchronize
                     );
                 }
 
-                $logger->notice(
+                $logger->debug(
                     'User roles successfully synced.',
                     [
                         'lookerResponse' => $lookerResponse
@@ -376,7 +381,8 @@ class Connector extends AbstractConnector implements ISynchronize
             $logger->debug(
                 'User roles verified',
                 [
-                    'userRoles' => $roleIds
+                    'local' => $rolesToAdd,
+                    'remote' => $roleIds
                 ]
             );
         }
@@ -419,7 +425,7 @@ class Connector extends AbstractConnector implements ISynchronize
         );
 
         if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
-            $logger->notice(
+            $logger->debug(
                 'Updating {slateUsername} groups to: [{userGroups}]',
                 [
                     'slateUsername' => $User->Username,
@@ -430,7 +436,7 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync user groups via API
             foreach ($groupsToAdd as $groupId) {
                 if ($pretend) {
-                    $logger->notice(
+                    $logger->debug(
                         'Adding user to group with ID: {groupId}',
                         [
                             'groupId' => $groupId
@@ -442,15 +448,15 @@ class Connector extends AbstractConnector implements ISynchronize
                 $lookerResponse = LookerAPI::addUserToGroup($lookerUser['id'], $groupId);
 
                 if (!empty($lookerResponse['group_ids']) && in_array($groupId, $lookerResponse['group_ids'])) {
-                    $logger->notice(
-                        'Ådded user to group with ID: {groupId}',
+                    $logger->debug(
+                        'Added user to group with ID: {groupId}',
                         [
                             'lookerResponse' => $lookerResponse,
                             'groupId' => $groupId
                         ]
                     );
                 } else {
-                    $logger->notice(
+                    $logger->error(
                         'Error adding user to group with ID: {groupId}',
                         [
                             'groupId' => $groupId,
@@ -459,15 +465,23 @@ class Connector extends AbstractConnector implements ISynchronize
                     );
                 }
             }
-
-            return new SyncResult(
-                empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
-                'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+        } else {
+            $logger->debug(
+                'User groups verified',
                 [
-                    'slateUsername' => $User->Username
+                    'remote' => $groupIds,
+                    'local' => $userGroups
                 ]
             );
         }
+
+        return new SyncResult(
+            empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
+            'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+            [
+                'slateUsername' => $User->Username
+            ]
+        );
     }
 
     protected static function getUserCustomAttributes(IPerson $User)
@@ -519,7 +533,13 @@ class Connector extends AbstractConnector implements ISynchronize
         }
 
         if (empty($customAttributesToAdd)) {
-            $logger->debug('User Custom Attributes verified');
+            $logger->debug(
+                'User Custom Attributes verified',
+                [
+                    'local' => $customAttributesToAdd,
+                    'remote' => $userCustomAttributes
+                ]
+            );
             return new SyncResult(
                 SyncResult::STATUS_VERIFIED,
                 'User custome attributes have been verified.',
@@ -528,15 +548,15 @@ class Connector extends AbstractConnector implements ISynchronize
                 ]
             );
         } else {
-            $logger->debug('Syncing user custom attributes for {slateUsername}', [
+
+            $logger->debug('Syncing user custom attributes for {slateUsername}: {attributesToSet}', [
                 'slateUsername' => $User->Username,
-                'attributesToSet' => $customAttributesToAdd
+                'attributesToSet' => join(', ', array_map(function($c) { return "$c[name] => $c[value]"; }, $customAttributesToAdd))
             ]);
 
-            if (!$pretend) {
-                foreach ($customAttributesToAdd as $customAttributeId => $customAttributeToAdd) {
+            foreach ($customAttributesToAdd as $customAttributeId => $customAttributeToAdd) {
+                if (!$pretend) {
                     $lookerResponse = LookerAPI::updateUserCustomAttribute($lookerUser['id'], $customAttributeId, $customAttributeToAdd);
-
                     if ($lookerResponse['value'] != $customAttributeToAdd['value']) {
                         \MICS::dump($lookerResponse, 'looker response');
                         $logger->error(
@@ -549,17 +569,18 @@ class Connector extends AbstractConnector implements ISynchronize
                         );
                         continue;
                     }
-
-                    $logger->debug(
-                        'Synced user Custom Attribute {customAttributeName} => {customAttributeValue}',
-                        [
-                            'customAttributeName' => $customAttributeToAdd['name'],
-                            'customAttributeValue' => $customAttributeToAdd['value'],
-                            'lookerResponse' => $lookerResponse
-                        ]
-                    );
                 }
+
+                $logger->debug(
+                    'Synced user Custom Attribute {customAttributeName} => {customAttributeValue}',
+                    [
+                        'customAttributeName' => $customAttributeToAdd['name'],
+                        'customAttributeValue' => $customAttributeToAdd['value'],
+                        'lookerResponse' => $lookerResponse
+                    ]
+                );
             }
+
 
             return new SyncResult(
                 SyncResult::STATUS_UPDATED,
