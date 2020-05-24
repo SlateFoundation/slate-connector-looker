@@ -222,9 +222,16 @@ class Connector extends AbstractConnector implements ISynchronize
                     'slateUsername' => $User->Username
                 ]
             );
-        } else { // trly to create user if no mapping found
+        } else { // try to create user if no mapping found
             // skip accounts with no email
             if (!$User->PrimaryEmail) {
+                $logger->debug(
+                    'Skipping user {slateUsername} without Primary Email',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+
                 return new SyncResult(
                     SyncResult::STATUS_SKIPPED,
                     'No email, skipping {slateUsername}',
