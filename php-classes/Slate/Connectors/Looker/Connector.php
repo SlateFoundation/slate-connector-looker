@@ -32,15 +32,18 @@ class Connector extends AbstractConnector implements ISynchronize
         Student::class => [],
         User::class => []
     ];
+    public static $groupsByUser;
 
     public static $rolesByAccountLevel = [];
     public static $rolesByAccountType = [
         Student::class => [],
         User::class => []
     ];
+    public static $rolesByUser;
 
     public static $customAttributesByType = [
     ];
+    public static $customAttributesByUser;
 
     // workflow implementations
     protected static function _getJobConfig(array $requestData)
@@ -307,13 +310,18 @@ class Connector extends AbstractConnector implements ISynchronize
     protected static function getUserRoles(IPerson $User)
     {
         $roleIds = [];
-        if (isset(static::$groupsByAccountLevel[$User->AccountLevel])) {
+        if (isset(static::$rolesByAccountLevel[$User->AccountLevel])) {
             $roleIds = array_merge($roleIds, static::$rolesByAccountLevel[$User->AccountLevel]);
         }
 
-        if (isset(static::$groupsByAccountType[$User->Class])) {
+        if (isset(static::$rolesByAccountType[$User->Class])) {
             $roleIds = array_merge($roleIds, static::$rolesByAccountType[$User->Class]);
         }
+
+        if (isset(static::$rolesByUser) && is_callable(static::$rolesByUser)) {
+            $roleIds = array_merge($roleIds, call_user_func([static::class, 'rolesByUser'], $User));
+        }
+
         return $roleIds;
     }
 
@@ -384,6 +392,10 @@ class Connector extends AbstractConnector implements ISynchronize
 
         if (isset(static::$groupsByAccountType[$User->Class])) {
             $groupIds = array_merge($groupIds, static::$groupsByAccountType[$User->Class]);
+        }
+
+        if (isset(static::$groupsByUser) && is_callable(static::$groupsByUser)) {
+            $groupIds = array_merge($groupIds, call_user_func([static::class, 'groupsByUser'], $User));
         }
         return $groupIds;
     }
@@ -464,6 +476,10 @@ class Connector extends AbstractConnector implements ISynchronize
                     $customAttributes[$customAttributeId] = $customAttributeMapping['value'];
                 }
             }
+        }
+
+        if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
+            $customAttributes = array_merge($customAttributes, call_user_func([static::class, 'customAttributesByUser'], $User));
         }
 
         return $customAttributes;
