@@ -355,8 +355,12 @@ class Connector extends AbstractConnector implements ISynchronize
 
             if (!$pretend) {
                 $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
+                $userRoleIds = [];
+                foreach ($lookerResponse as $userRoleData) {
+                    $userRoleIds[] = $userRoleData['id'];
+                }
 
-                if (empty($lookerResponse['role_ids']) || array_diff($lookerResponse['role_ids'], $rolesToAdd)) {
+                if (empty($userRoleIds) || array_diff($userRoleIds, $rolesToAdd)) {
                     $logger->error('Error syncing user roles', [
                         'lookerResponse' => $lookerResponse,
                         'rolesToAdd' => $rolesToAdd
