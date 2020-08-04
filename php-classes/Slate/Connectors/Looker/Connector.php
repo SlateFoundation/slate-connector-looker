@@ -10,19 +10,19 @@ use Slate\People\Student;
 
 use Slate\Connectors\Looker\API AS LookerAPI;
 
-use Emergence\Connectors\AbstractConnector;
 use Emergence\Connectors\ISynchronize;
 use Emergence\Connectors\IJob;
 use Emergence\Connectors\Mapping;
 use Emergence\Connectors\Exceptions\SyncException;
 use Emergence\Connectors\SyncResult;
+use Emergence\SAML2\Connector as SAML2Connector;
 
 use Emergence\People\IPerson;
 use Emergence\People\User;
 use Emergence\People\ContactPoint\Email AS EmailContactPoint;
 use Emergence\Util\Data AS DataUtil;
 
-class Connector extends AbstractConnector implements ISynchronize
+class Connector extends SAML2Connector implements ISynchronize
 {
     public static $title = 'Looker';
     public static $connectorId = 'looker';
@@ -653,5 +653,31 @@ class Connector extends AbstractConnector implements ISynchronize
         } // end of Slate users loop
 
         return $results;
+    }
+
+    /**
+    * IdentityConsumer interface methods
+    */
+    public static function getSAMLNameId(IPerson $Person)
+    {
+        if (!$Person->Username) {
+            throw new Exception('must have a username to connect to Looker');
+        }
+
+        return [
+            'Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            'Value' => $Person->Email
+        ];
+    }
+
+
+    public static function getSAMLAttributes(IPerson $Person)
+    {
+        // TODO: add roles, groups, custom attributes
+        return [
+            'Email' => [$Person->Email],
+            'FName' => [$Person->FirstName],
+            'LName' => [$Person->LastName]
+        ];
     }
 }
