@@ -677,7 +677,8 @@ class Connector extends SAML2Connector implements ISynchronize
         return [
             'Email' => [$Person->Email],
             'FName' => [$Person->FirstName],
-            'LName' => [$Person->LastName]
+            'LName' => [$Person->LastName],
+            'Roles' => static::getUserRoles($Person)
         ];
     }
 }
