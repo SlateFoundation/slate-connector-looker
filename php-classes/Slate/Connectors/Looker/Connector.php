@@ -8,21 +8,21 @@ use Psr\Log\LoggerInterface;
 use Slate;
 use Slate\People\Student;
 
-use Looker\API AS LookerAPI;
+use Slate\Connectors\Looker\API AS LookerAPI;
 
-use Emergence\Connectors\AbstractConnector;
 use Emergence\Connectors\ISynchronize;
-use Emergence\Connectors\Job;
+use Emergence\Connectors\IJob;
 use Emergence\Connectors\Mapping;
 use Emergence\Connectors\Exceptions\SyncException;
 use Emergence\Connectors\SyncResult;
+use Emergence\SAML2\Connector as SAML2Connector;
 
 use Emergence\People\IPerson;
 use Emergence\People\User;
 use Emergence\People\ContactPoint\Email AS EmailContactPoint;
 use Emergence\Util\Data AS DataUtil;
 
-class Connector extends AbstractConnector implements ISynchronize
+class Connector extends SAML2Connector implements ISynchronize
 {
     public static $title = 'Looker';
     public static $connectorId = 'looker';
@@ -32,15 +32,18 @@ class Connector extends AbstractConnector implements ISynchronize
         Student::class => [],
         User::class => []
     ];
+    public static $groupsByUser;
 
     public static $rolesByAccountLevel = [];
     public static $rolesByAccountType = [
         Student::class => [],
         User::class => []
     ];
+    public static $rolesByUser;
 
     public static $customAttributesByType = [
     ];
+    public static $customAttributesByUser;
 
     // workflow implementations
     protected static function _getJobConfig(array $requestData)
@@ -54,7 +57,7 @@ class Connector extends AbstractConnector implements ISynchronize
         return $config;
     }
 
-    public static function synchronize(Job $Job, $pretend = true)
+    public static function synchronize(IJob $Job, $pretend = true)
     {
         if ($Job->Status != 'Pending' && $Job->Status != 'Completed') {
             return static::throwError('Cannot execute job, status is not Pending or Complete');
@@ -184,9 +187,14 @@ class Connector extends AbstractConnector implements ISynchronize
                 );
             }
 
+
+            $userUpdated = false;
             // sync groups
             try {
                 $groupSyncResult = static::syncUserGroups($User, $lookerUser, $logger, $pretend);
+                if ($groupSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -196,6 +204,9 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync roles
             try {
                 $rolesSyncResult = static::syncUserRoles($User, $lookerUser, $logger, $pretend);
+                if ($rolesSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -205,6 +216,9 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync custom attributes
             try {
                 $customAttributesSyncResult = static::syncUserCustomAttributes($User, $lookerUser, $logger, $pretend);
+                if ($customAttributesSyncResult->getStatus() === SyncResult::STATUS_UPDATED) {
+                    $userUpdated = true;
+                }
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -213,15 +227,22 @@ class Connector extends AbstractConnector implements ISynchronize
             }
 
             return new SyncResult(
-                !empty($changes) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
+                (!empty($changes) || !empty($userUpdated)) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
                 'Looker account for {slateUsername} found and verified up-to-date.',
                 [
                     'slateUsername' => $User->Username
                 ]
             );
-        } else { // trly to create user if no mapping found
+        } else { // try to create user if no mapping found
             // skip accounts with no email
             if (!$User->PrimaryEmail) {
+                $logger->debug(
+                    'Skipping user {slateUsername} without Primary Email',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+
                 return new SyncResult(
                     SyncResult::STATUS_SKIPPED,
                     'No email, skipping {slateUsername}',
@@ -232,37 +253,39 @@ class Connector extends AbstractConnector implements ISynchronize
             }
 
             if (!$pretend) {
-            $lookerResponse = LookerAPI::createUser([
-                'first_name' => $User->FirstName,
-                'last_name' => $User->LastName,
+                $lookerResponse = LookerAPI::createUser([
+                    'first_name' => $User->FirstName,
+                    'last_name' => $User->LastName,
                     'email' => $User->PrimaryEmail->toString()
-            ]);
+                ]);
 
                 if (empty($lookerResponse['id'])) {
                     throw new SyncException(
                         'Failed to create Looker user for {slateUsername}',
-                [
-                    'slateUsername' => $User->Username,
-                    'lookerResponse' => $lookerResponse
-                ]
-            );
+                        [
+                            'slateUsername' => $User->Username,
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
                 }
 
                 $mappingData['ExternalIdentifier'] = $lookerResponse['id'];
                 Mapping::create($mappingData, true);
+            } else {
+                $lookerResponse = [];
             }
 
             $logger->notice(
                 'Created Looker user for {slateUsername}',
                     [
                         'slateUsername' => $User->Username,
-                    'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
+                        'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
                 );
 
             // sync groups
             try {
-            $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
+                $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -293,8 +316,8 @@ class Connector extends AbstractConnector implements ISynchronize
                 'Created Looker user for {slateUsername}, saved mapping to new Looker user #{lookerUserId}',
                     [
                         'slateUsername' => $User->Username,
-                    'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
-                    'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
+                        'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
+                        'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
                 );
 
@@ -305,19 +328,24 @@ class Connector extends AbstractConnector implements ISynchronize
     protected static function getUserRoles(IPerson $User)
     {
         $roleIds = [];
-        if (isset(static::$groupsByAccountLevel[$User->AccountLevel])) {
+        if (isset(static::$rolesByAccountLevel[$User->AccountLevel])) {
             $roleIds = array_merge($roleIds, static::$rolesByAccountLevel[$User->AccountLevel]);
         }
 
-        if (isset(static::$groupsByAccountType[$User->Class])) {
+        if (isset(static::$rolesByAccountType[$User->Class])) {
             $roleIds = array_merge($roleIds, static::$rolesByAccountType[$User->Class]);
         }
+
+        if (isset(static::$rolesByUser) && is_callable(static::$rolesByUser)) {
+            $roleIds = array_merge($roleIds, call_user_func(static::$rolesByUser, $User));
+        }
+
         return $roleIds;
     }
 
     protected static function syncUserRoles(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
-        $roleIds = $lookerUser['role_ids'];
+        $roleIds = $lookerUser['role_ids'] ?: [];
         $userRoles = static::getUserRoles($User);
 
         $logger->debug(
@@ -328,7 +356,7 @@ class Connector extends AbstractConnector implements ISynchronize
         );
 
         if ($rolesToAdd = array_diff($userRoles, $roleIds)) {
-            $logger->notice(
+            $logger->debug(
                 'Updating {slateUsername} roles to: [{userRoles}]',
                 [
                     'slateUsername' => $User->Username,
@@ -338,8 +366,17 @@ class Connector extends AbstractConnector implements ISynchronize
 
             if (!$pretend) {
                 $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
+                $userRoleIds = [];
+                foreach ($lookerResponse as $userRoleData) {
+                    $userRoleIds[] = $userRoleData['id'];
+                }
 
-                if (empty($lookerResponse['role_ids']) || array_diff($lookerResponse['role_ids'], $rolesToAdd)) {
+                if (empty($userRoleIds) || array_diff($userRoleIds, $rolesToAdd)) {
+                    $logger->error('Error syncing user roles', [
+                        'lookerResponse' => $lookerResponse,
+                        'rolesToAdd' => $rolesToAdd
+                    ]);
+
                     return new SyncException(
                         'Unable to sync user roles.',
                         [
@@ -348,7 +385,7 @@ class Connector extends AbstractConnector implements ISynchronize
                     );
                 }
 
-                $logger->notice(
+                $logger->debug(
                     'User roles successfully synced.',
                     [
                         'lookerResponse' => $lookerResponse
@@ -359,7 +396,8 @@ class Connector extends AbstractConnector implements ISynchronize
             $logger->debug(
                 'User roles verified',
                 [
-                    'userRoles' => $roleIds
+                    'local' => $rolesToAdd,
+                    'remote' => $roleIds
                 ]
             );
         }
@@ -383,12 +421,16 @@ class Connector extends AbstractConnector implements ISynchronize
         if (isset(static::$groupsByAccountType[$User->Class])) {
             $groupIds = array_merge($groupIds, static::$groupsByAccountType[$User->Class]);
         }
+
+        if (isset(static::$groupsByUser) && is_callable(static::$groupsByUser)) {
+            $groupIds = array_merge($groupIds, call_user_func(static::$groupsByUser, $User));
+        }
         return $groupIds;
     }
 
     protected static function syncUserGroups(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
-        $groupIds = $lookerUser['group_ids'];
+        $groupIds = $lookerUser['group_ids'] ?: [];
         $userGroups = array_values(static::getUserGroups($User));
         $logger->debug(
             'Analyzing user groups: [{groupIds}]',
@@ -398,7 +440,7 @@ class Connector extends AbstractConnector implements ISynchronize
         );
 
         if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
-            $logger->notice(
+            $logger->debug(
                 'Updating {slateUsername} groups to: [{userGroups}]',
                 [
                     'slateUsername' => $User->Username,
@@ -409,7 +451,7 @@ class Connector extends AbstractConnector implements ISynchronize
             // sync user groups via API
             foreach ($groupsToAdd as $groupId) {
                 if ($pretend) {
-                    $logger->notice(
+                    $logger->debug(
                         'Adding user to group with ID: {groupId}',
                         [
                             'groupId' => $groupId
@@ -421,15 +463,15 @@ class Connector extends AbstractConnector implements ISynchronize
                 $lookerResponse = LookerAPI::addUserToGroup($lookerUser['id'], $groupId);
 
                 if (!empty($lookerResponse['group_ids']) && in_array($groupId, $lookerResponse['group_ids'])) {
-                    $logger->notice(
-                        'Ådded user to group with ID: {groupId}',
+                    $logger->debug(
+                        'Added user to group with ID: {groupId}',
                         [
                             'lookerResponse' => $lookerResponse,
                             'groupId' => $groupId
                         ]
                     );
                 } else {
-                    $logger->notice(
+                    $logger->error(
                         'Error adding user to group with ID: {groupId}',
                         [
                             'groupId' => $groupId,
@@ -438,15 +480,23 @@ class Connector extends AbstractConnector implements ISynchronize
                     );
                 }
             }
-
-            return new SyncResult(
-                empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
-                'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+        } else {
+            $logger->debug(
+                'User groups verified',
                 [
-                    'slateUsername' => $User->Username
+                    'remote' => $groupIds,
+                    'local' => $userGroups
                 ]
             );
         }
+
+        return new SyncResult(
+            empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
+            'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+            [
+                'slateUsername' => $User->Username
+            ]
+        );
     }
 
     protected static function getUserCustomAttributes(IPerson $User)
@@ -464,30 +514,47 @@ class Connector extends AbstractConnector implements ISynchronize
             }
         }
 
+        if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
+            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User));
+        }
+
         return $customAttributes;
     }
 
     protected static function syncUserCustomAttributes(IPerson $User, array $lookerUser, LoggerInterface $logger = null, $pretend = true)
     {
         $userCustomAttributes = static::getUserCustomAttributes($User);
-        $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
         $customAttributesToAdd = [];
 
-        foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
-            if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
-                continue;
-            }
+        if (!empty($lookerUser)) {
+            $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
+        } else {
+            $currentUserCustomAttributes = [];
+        }
 
-            if ($lookerCustomAttribute['value'] != $userCustomAttributes[$lookerCustomAttribute['name']]) {
-                $customAttributesToAdd[$lookerCustomAttribute['user_attribute_id']] = [
-                    'name' => $lookerCustomAttribute['name'],
-                    'value' => $userCustomAttributes[$lookerCustomAttribute['name']]
-                ];
+        if (!empty($currentUserCustomAttributes)) {
+            foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
+                if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
+                    continue;
+                }
+
+                if ($lookerCustomAttribute['value'] != $userCustomAttributes[$lookerCustomAttribute['name']]) {
+                    $customAttributesToAdd[$lookerCustomAttribute['user_attribute_id']] = [
+                        'name' => $lookerCustomAttribute['name'],
+                        'value' => $userCustomAttributes[$lookerCustomAttribute['name']]
+                    ];
+                }
             }
         }
 
         if (empty($customAttributesToAdd)) {
-            $logger->debug('User Custom Attributes verified');
+            $logger->debug(
+                'User Custom Attributes verified',
+                [
+                    'local' => $customAttributesToAdd,
+                    'remote' => $userCustomAttributes
+                ]
+            );
             return new SyncResult(
                 SyncResult::STATUS_VERIFIED,
                 'User custome attributes have been verified.',
@@ -496,15 +563,15 @@ class Connector extends AbstractConnector implements ISynchronize
                 ]
             );
         } else {
-            $logger->debug('Syncing user custom attributes for {slateUsername}', [
+
+            $logger->debug('Syncing user custom attributes for {slateUsername}: {attributesToSet}', [
                 'slateUsername' => $User->Username,
-                'attributesToSet' => $customAttributesToAdd
+                'attributesToSet' => join(', ', array_map(function($c) { return "$c[name] => $c[value]"; }, $customAttributesToAdd))
             ]);
 
-            if (!$pretend) {
-                foreach ($customAttributesToAdd as $customAttributeId => $customAttributeToAdd) {
+            foreach ($customAttributesToAdd as $customAttributeId => $customAttributeToAdd) {
+                if (!$pretend) {
                     $lookerResponse = LookerAPI::updateUserCustomAttribute($lookerUser['id'], $customAttributeId, $customAttributeToAdd);
-
                     if ($lookerResponse['value'] != $customAttributeToAdd['value']) {
                         \MICS::dump($lookerResponse, 'looker response');
                         $logger->error(
@@ -517,17 +584,18 @@ class Connector extends AbstractConnector implements ISynchronize
                         );
                         continue;
                     }
-
-                    $logger->debug(
-                        'Synced user Custom Attribute {customAttributeName} => {customAttributeValue}',
-                        [
-                            'customAttributeName' => $customAttributeToAdd['name'],
-                            'customAttributeValue' => $customAttributeToAdd['value'],
-                            'lookerResponse' => $lookerResponse
-                        ]
-                    );
                 }
+
+                $logger->debug(
+                    'Synced user Custom Attribute {customAttributeName} => {customAttributeValue}',
+                    [
+                        'customAttributeName' => $customAttributeToAdd['name'],
+                        'customAttributeValue' => $customAttributeToAdd['value'],
+                        'lookerResponse' => $lookerResponse
+                    ]
+                );
             }
+
 
             return new SyncResult(
                 SyncResult::STATUS_UPDATED,
@@ -541,7 +609,7 @@ class Connector extends AbstractConnector implements ISynchronize
     }
 
     // task handlers
-    public static function pushUsers(Job $Job, $pretend = true)
+    public static function pushUsers(IJob $Job, $pretend = true)
     {
         // initialize results
         $results = [
@@ -585,5 +653,31 @@ class Connector extends AbstractConnector implements ISynchronize
         } // end of Slate users loop
 
         return $results;
+    }
+
+    /**
+    * IdentityConsumer interface methods
+    */
+    public static function getSAMLNameId(IPerson $Person)
+    {
+        if (!$Person->Username) {
+            throw new Exception('must have a username to connect to Looker');
+        }
+
+        return [
+            'Format' => 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            'Value' => $Person->Email
+        ];
+    }
+
+
+    public static function getSAMLAttributes(IPerson $Person)
+    {
+        // TODO: add roles, groups, custom attributes
+        return [
+            'Email' => [$Person->Email],
+            'FName' => [$Person->FirstName],
+            'LName' => [$Person->LastName]
+        ];
     }
 }
