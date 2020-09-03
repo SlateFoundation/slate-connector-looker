@@ -141,20 +141,19 @@ class Connector extends SAML2Connector implements ISynchronize
 
             // check for any changes
             $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
-            $changes = [];
             $lookerUserChanges = [];
 
-            if ($lookerUser['first_name'] != ($User->PreferredName ?: $User->FirstName)) {
-                $lookerUserChanges['user[first_name]'] = [
+            if ($lookerUser['first_name'] != $User->FirstName) {
+                $lookerUserChanges['first_name'] = [
                     'from' => $lookerUser['first_name'],
-                    'to' => $User->PreferredName ?: $User->Firstname
+                    'to' => $User->FirstName
                 ];
             }
 
             if ($lookerUser['last_name'] != $User->LastName) {
-                $lookerUserChanges['user[last_name]'] = [
+                $lookerUserChanges['last_name'] = [
                     'from' => $lookerUser['last_name'],
-                    'to' => $User->Lastname
+                    'to' => $User->LastName
                 ];
             }
 
@@ -227,7 +226,7 @@ class Connector extends SAML2Connector implements ISynchronize
             }
 
             return new SyncResult(
-                (!empty($changes) || !empty($userUpdated)) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
+                (!empty($lookerUserChanges) || !empty($userUpdated)) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
                 'Looker account for {slateEmail} found and verified up-to-date.',
                 [
                     'slateEmail' => $User->Email
