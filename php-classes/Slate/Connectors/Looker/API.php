@@ -84,9 +84,19 @@ class API
 
     public static function updateUser($userId, $data = [])
     {
-        \MICS::dump($data, $userId);
-        return static::post('users/'.$userId, $data);
+        return static::patch('users/'.$userId, $data);
     }
+    //https://building21.looker.com:19999/api-docs/index.html#!/3.1/User/create_user_credentials_email
+    public static function createUserEmailCredentials($userId, $data = [])
+    {
+        return static::post('users/'.$userId.'/credentials_email', $data);
+    }
+    //https://building21.looker.com:19999/api-docs/index.html#!/3.1/User/update_user_credentials_email
+    public static function updateUserEmailCredentials($userId, $data = [])
+    {
+        return static::patch('users/'.$userId.'/credentials_email', $data);
+    }
+
     // https://building21.looker.com:19999/api-docs/index.html#!/3.1/User/set_user_roles
     public static function updateUserRoles($userId, $data = [])
     {
