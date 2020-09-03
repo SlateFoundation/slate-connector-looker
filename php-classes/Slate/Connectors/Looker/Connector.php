@@ -376,6 +376,18 @@ class Connector extends SAML2Connector implements ISynchronize
 
             if (!$pretend) {
                 $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
+                if (empty($lookerResponse) || !is_array($lookerResponse)) {
+                    $logger->error('Unexpected response syncing user roles', [
+                        'lookerResponse' => $lookerResponse
+                    ]);
+
+                    return new SyncException(
+                        'Unable to sync user roles.',
+                        [
+                            'lookerResponse' => $lookerResponse
+                        ]
+                    );
+                }
                 $userRoleIds = [];
                 foreach ($lookerResponse as $userRoleData) {
                     $userRoleIds[] = $userRoleData['id'];
@@ -443,15 +455,16 @@ class Connector extends SAML2Connector implements ISynchronize
         $groupIds = $lookerUser['group_ids'] ?: [];
         $userGroups = array_values(static::getUserGroups($User));
         $logger->debug(
-            'Analyzing user groups: [{groupIds}]',
+            'Analyzing looker user groups: {groupIds}',
             [
-                'groupIds' => join(',', $groupIds)
+                'groupIds' => empty($groupIds) ? '(none)' : '[' . join(',', $groupIds) .']'
             ]
         );
 
-        if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
+        if (!empty($groupsToAdd = array_diff($userGroups, $groupIds))) {
+
             $logger->debug(
-                'Updating {slateEmail} groups to: [{userGroups}]',
+                'Updating {slateEmail} Looker groups to: [{userGroups}]',
                 [
                     'slateEmail' => $User->Email,
                     'userGroups' => join(',', array_unique(array_merge($userGroups, $groupIds)))
@@ -627,14 +640,14 @@ class Connector extends SAML2Connector implements ISynchronize
             'created' => 0,
             'updated' => 0,
             'skipped' => 0,
-            'failed' => 0
+            'failed' => 0,
+            'verified' => 0
         ];
 
         // iterate over Slate users
-        $slateUsers = [];
-        $slateOnlyUsers = [];
+        $UsersToSync = User::getAllByWhere('Username IS NOT NULL AND AccountLevel != "Disabled"');
 
-        foreach (User::getAllByWhere('Username IS NOT NULL AND AccountLevel != "Disabled"') AS $User) {
+        foreach ($UsersToSync AS $User) {
             $Job->debug(
                 'Analyzing Slate user {slateUsername} ({slateEmail})',
                 [
@@ -651,6 +664,8 @@ class Connector extends SAML2Connector implements ISynchronize
                     $results['created']++;
                 } elseif ($syncResult->getStatus() === SyncResult::STATUS_UPDATED) {
                     $results['updated']++;
+                } elseif ($syncResult->getStatus() === SyncResult::STATUS_VERIFIED) {
+                    $results['verified']++;
                 } elseif ($syncResult->getStatus() === SyncResult::STATUS_SKIPPED) {
                     $results['skipped']++;
                     continue;
