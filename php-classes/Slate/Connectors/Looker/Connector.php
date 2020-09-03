@@ -163,26 +163,26 @@ class Connector extends SAML2Connector implements ISynchronize
                 if (!$pretend) {
                     $lookerResponse = LookerAPI::updateUser($Mapping->ExternalIdentifier, DataUtil::extractToFromDelta($lookerUserChanges));
                     $logger->debug(
-                        'Updating Looker for user {slateUsername}',
+                        'Updating Looker for user {slateEmail}',
                         [
-                            'slateUsername' => $User->Username,
+                            'slateEmail' => $User->Email,
                             'lookerUserChanges' => $lookerUserChanges,
                             'lookerResponse' => $lookerResponse
                         ]
                     );
                 }
                 $logger->notice(
-                    'Updated user {slateUsername}',
+                    'Updated user {slateEmail}',
                     [
-                        'slateUsername' => $User->Username,
+                        'slateEmail' => $User->Email,
                         'changes' => $changes['user']
                     ]
                 );
             } else {
                 $logger->debug(
-                    'Looker user matches Slate user {slateUsername}',
+                    'Looker user matches Slate user {slateEmail}',
                     [
-                        'slateUsername' => $User->Username
+                        'slateEmail' => $User->Email
                     ]
                 );
             }
@@ -228,16 +228,16 @@ class Connector extends SAML2Connector implements ISynchronize
 
             return new SyncResult(
                 (!empty($changes) || !empty($userUpdated)) ? SyncResult::STATUS_UPDATED : SyncResult::STATUS_VERIFIED,
-                'Looker account for {slateUsername} found and verified up-to-date.',
+                'Looker account for {slateEmail} found and verified up-to-date.',
                 [
-                    'slateUsername' => $User->Username
+                    'slateEmail' => $User->Email
                 ]
             );
         } else { // try to create user if no mapping found
             // skip accounts with no email
-            if (!$User->PrimaryEmail) {
+            if (!$User->Email) {
                 $logger->debug(
-                    'Skipping user {slateUsername} without Primary Email',
+                    'Skipping user {slateUsername} without Email',
                     [
                         'slateUsername' => $User->Username
                     ]
@@ -256,14 +256,14 @@ class Connector extends SAML2Connector implements ISynchronize
                 $lookerResponse = LookerAPI::createUser([
                     'first_name' => $User->FirstName,
                     'last_name' => $User->LastName,
-                    'email' => $User->PrimaryEmail->toString()
+                    'email' => $User->Email
                 ]);
 
                 if (empty($lookerResponse['id'])) {
                     throw new SyncException(
-                        'Failed to create Looker user for {slateUsername}',
+                        'Failed to create Looker user for {slateEmail}',
                         [
-                            'slateUsername' => $User->Username,
+                            'slateEmail' => $User->Email,
                             'lookerResponse' => $lookerResponse
                         ]
                     );
@@ -276,9 +276,9 @@ class Connector extends SAML2Connector implements ISynchronize
             }
 
             $logger->notice(
-                'Created Looker user for {slateUsername}',
+                'Created Looker user for {slateEmail}',
                     [
-                        'slateUsername' => $User->Username,
+                        'slateEmail' => $User->Email,
                         'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
                 );
@@ -313,9 +313,9 @@ class Connector extends SAML2Connector implements ISynchronize
 
             return new SyncResult(
                 SyncResult::STATUS_CREATED,
-                'Created Looker user for {slateUsername}, saved mapping to new Looker user #{lookerUserId}',
+                'Created Looker user for {slateEmail}, saved mapping to new Looker user #{lookerUserId}',
                     [
-                        'slateUsername' => $User->Username,
+                        'slateEmail' => $User->Email,
                         'lookerUserId' => $pretend ? '(pretend-mode)' : $lookerResponse['id'],
                         'lookerUser' => $pretend ? '(pretend-mode)' : $lookerResponse
                     ]
@@ -357,9 +357,9 @@ class Connector extends SAML2Connector implements ISynchronize
 
         if ($rolesToAdd = array_diff($userRoles, $roleIds)) {
             $logger->debug(
-                'Updating {slateUsername} roles to: [{userRoles}]',
+                'Updating {slateEmail} roles to: [{userRoles}]',
                 [
-                    'slateUsername' => $User->Username,
+                    'slateEmail' => $User->Email,
                     'userRoles' => join(',', array_unique(array_merge($userRoles, $roleIds)))
                 ]
             );
@@ -441,9 +441,9 @@ class Connector extends SAML2Connector implements ISynchronize
 
         if ($groupsToAdd = array_diff($userGroups, $groupIds)) {
             $logger->debug(
-                'Updating {slateUsername} groups to: [{userGroups}]',
+                'Updating {slateEmail} groups to: [{userGroups}]',
                 [
-                    'slateUsername' => $User->Username,
+                    'slateEmail' => $User->Email,
                     'userGroups' => join(',', array_unique(array_merge($userGroups, $groupIds)))
                 ]
             );
@@ -492,9 +492,9 @@ class Connector extends SAML2Connector implements ISynchronize
 
         return new SyncResult(
             empty($groupsToAdd) ? SyncResult::STATUS_VERIFIED : SyncResult::STATUS_UPDATED,
-            'Updated groups for {slateUsername} in Looker ' . $pretend ? '(pretend-mode)' : '',
+            'Updated groups for {slateEmail} in Looker ' . $pretend ? '(pretend-mode)' : '',
             [
-                'slateUsername' => $User->Username
+                'slateEmail' => $User->Email
             ]
         );
     }
@@ -564,8 +564,8 @@ class Connector extends SAML2Connector implements ISynchronize
             );
         } else {
 
-            $logger->debug('Syncing user custom attributes for {slateUsername}: {attributesToSet}', [
-                'slateUsername' => $User->Username,
+            $logger->debug('Syncing user custom attributes for {slateEmail}: {attributesToSet}', [
+                'slateEmail' => $User->Email,
                 'attributesToSet' => join(', ', array_map(function($c) { return "$c[name] => $c[value]"; }, $customAttributesToAdd))
             ]);
 
@@ -626,11 +626,10 @@ class Connector extends SAML2Connector implements ISynchronize
 
         foreach (User::getAllByWhere('Username IS NOT NULL AND AccountLevel != "Disabled"') AS $User) {
             $Job->debug(
-                'Analyzing Slate user {slateUsername} ({slateUserClass}/{userGraduationYear})',
+                'Analyzing Slate user {slateUsername} ({slateEmail})',
                 [
                     'slateUsername' => $User->Username,
-                    'slateUserClass' => $User->Class,
-                    'userGraduationYear' => $User->GraduationYear
+                    'slateEmail' => $User->Email
                 ]
             );
             $results['analyzed']++;
@@ -673,12 +672,13 @@ class Connector extends SAML2Connector implements ISynchronize
 
     public static function getSAMLAttributes(IPerson $Person)
     {
-        // TODO: add roles, groups, custom attributes
+        // TODO: add roles, groups, custom attributes?
         return [
             'Email' => [$Person->Email],
             'FName' => [$Person->FirstName],
-            'LName' => [$Person->LastName],
-            'Roles' => static::getUserRoles($Person)
+            'LName' => [$Person->LastName]
+            // removed until thoroughly tested
+            //'Roles' => static::getUserRoles($Person)
         ];
     }
 }
