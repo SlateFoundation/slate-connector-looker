@@ -254,8 +254,7 @@ class Connector extends SAML2Connector implements ISynchronize
             if (!$pretend) {
                 $lookerResponse = LookerAPI::createUser([
                     'first_name' => $User->FirstName,
-                    'last_name' => $User->LastName,
-                    'email' => $User->Email
+                    'last_name' => $User->LastName
                 ]);
 
                 if (empty($lookerResponse['id'])) {
@@ -269,22 +268,34 @@ class Connector extends SAML2Connector implements ISynchronize
                 }
 
                 $mappingData['ExternalIdentifier'] = $lookerResponse['id'];
-                Mapping::create($mappingData, true);
+                $Mapping = Mapping::create($mappingData, true);
+
+                $credentialsResponse = LookerAPI::createUserEmailCredentials($Mapping->ExternalIdentifier, [
+                    'email' => $User->Email
+                ]);
+
+                $logger->notice(
+                    'Created Looker user credentials for {slateEmail}',
+                    [
+                        'slateEmail' => $User->Email,
+                        'lookerResponse' => $pretend ? '(pretend-mode)' : $credentialsResponse
+                    ]
+                );
+
             } else {
                 $lookerResponse = [];
             }
 
             $logger->notice(
                 'Created Looker user for {slateEmail}',
-                    [
-                        'slateEmail' => $User->Email,
-                        'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
-                    ]
-                );
-
+                [
+                    'slateEmail' => $User->Email,
+                    'lookerResponse' => $pretend ? '(pretend-mode)' : $lookerResponse
+                ]
+            );
             // sync groups
             try {
-                $groupSyncResult = static::syncUserGroups($User, [], $logger, $pretend);
+                $groupSyncResult = static::syncUserGroups($User, $lookerResponse, $logger, $pretend);
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
@@ -293,7 +304,7 @@ class Connector extends SAML2Connector implements ISynchronize
             }
             // sync roles
             try {
-                static::syncUserRoles($User, [], $logger, $pretend);
+                static::syncUserRoles($User, $lookerResponse, $logger, $pretend);
             } catch (SyncException $e) {
                 $logger->error(
                     $e->getInterpolatedMessage(),
