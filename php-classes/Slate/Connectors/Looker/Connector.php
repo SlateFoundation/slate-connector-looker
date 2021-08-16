@@ -22,6 +22,8 @@ use Emergence\People\User;
 use Emergence\People\ContactPoint\Email AS EmailContactPoint;
 use Emergence\Util\Data AS DataUtil;
 
+use Slate\NetworkHub\SchoolUser;
+
 class Connector extends SAML2Connector implements ISynchronize
 {
     public static $title = 'Looker';
@@ -53,6 +55,7 @@ class Connector extends SAML2Connector implements ISynchronize
         $config['clientId'] = $requestData['clientId'];
         $config['clientSecret'] = $requestData['clientSecret'];
         $config['pushUsers'] = !empty($requestData['pushUsers']);
+        $config['pushSchools'] = $requestData['schools'];
 
         return $config;
     }
@@ -119,18 +122,8 @@ class Connector extends SAML2Connector implements ISynchronize
     {
         $logger = static::getLogger($logger);
 
-        // get mapping
-        $mappingData = [
-            'ContextClass' => $User->getRootClass(),
-            'ContextID' => $User->ID,
-            'Connector' => static::getConnectorId(),
-            'ExternalKey' => 'user[id]'
-        ];
-
-        $Mapping = Mapping::getByWhere($mappingData);
-
         // sync account
-        if ($Mapping) {
+        if ($Mapping = static::getUserMapping($User)) {
             $logger->debug(
                 'Found mapping to Looker user {lookerUserId}, checking for updates...',
                 [
@@ -141,6 +134,10 @@ class Connector extends SAML2Connector implements ISynchronize
 
             // check for any changes
             $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
+            if (isset($lookerUser['message']) && $lookerUser['message'] === 'Not found') {
+                throw new SyncException('Failed to find Looker User with ID '. $Mapping->ExternalIdentifier);
+            }
+
             $lookerUserChanges = [];
 
             if ($lookerUser['first_name'] != $User->FirstName) {
@@ -267,14 +264,13 @@ class Connector extends SAML2Connector implements ISynchronize
                     );
                 }
 
-                $mappingData['ExternalIdentifier'] = $lookerResponse['id'];
-                $Mapping = Mapping::create($mappingData, true);
+                $Mapping = static::createUserMapping($User, $lookerResponse['id']);
 
                 $credentialsResponse = LookerAPI::createUserEmailCredentials($Mapping->ExternalIdentifier, [
                     'email' => $User->Email
                 ]);
 
-                $logger->notice(
+                $logger->debug(
                     'Created Looker user credentials for {slateEmail}',
                     [
                         'slateEmail' => $User->Email,
@@ -335,6 +331,29 @@ class Connector extends SAML2Connector implements ISynchronize
         }
     }
 
+    protected static function getUserMappingData(IPerson $User)
+    {
+        return [
+            'ContextClass' => $User->getRootClass(),
+            'ContextID' => $User->ID,
+            'Connector' => static::getConnectorId(),
+            'ExternalKey' => 'user[id]'
+        ];
+    }
+
+    protected static function getUserMapping(IPerson $User)
+    {
+        return Mapping::getByWhere(static::getUserMappingData($User));
+    }
+
+    protected static function createUserMapping(IPerson $User, $externalIdentifier)
+    {
+        $mappingData = static::getUserMappingData($User);
+        $mappingData['ExternalIdentifier'] = $externalIdentifier;
+
+        return Mapping::create($mappingData, true);
+    }
+
     protected static function getUserRoles(IPerson $User)
     {
         $roleIds = [];
@@ -376,18 +395,23 @@ class Connector extends SAML2Connector implements ISynchronize
 
             if (!$pretend) {
                 $lookerResponse = LookerAPI::updateUserRoles($lookerUser['id'], $rolesToAdd);
-                if (empty($lookerResponse) || !is_array($lookerResponse)) {
+                if (
+                    empty($lookerResponse) ||
+                    !is_array($lookerResponse) ||
+                    (!empty($lookerResponse['message']) && $lookerResponse['message'] == 'Not found')
+                ) {
                     $logger->error('Unexpected response syncing user roles', [
                         'lookerResponse' => $lookerResponse
                     ]);
 
-                    return new SyncException(
+                    throw new SyncException(
                         'Unable to sync user roles.',
                         [
                             'lookerResponse' => $lookerResponse
                         ]
                     );
                 }
+
                 $userRoleIds = [];
                 foreach ($lookerResponse as $userRoleData) {
                     $userRoleIds[] = $userRoleData['id'];
@@ -399,7 +423,7 @@ class Connector extends SAML2Connector implements ISynchronize
                         'rolesToAdd' => $rolesToAdd
                     ]);
 
-                    return new SyncException(
+                    throw new SyncException(
                         'Unable to sync user roles.',
                         [
                             'lookerResponse' => $lookerResponse
@@ -538,7 +562,7 @@ class Connector extends SAML2Connector implements ISynchronize
         }
 
         if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
-            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User));
+            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User, $School));
         }
 
         return $customAttributes;
@@ -549,15 +573,16 @@ class Connector extends SAML2Connector implements ISynchronize
         $userCustomAttributes = static::getUserCustomAttributes($User);
         $customAttributesToAdd = [];
 
-        if (!empty($lookerUser)) {
-            $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($lookerUser['id']);
+
+        if ($UserMapping = static::getUserMapping($User)) {
+            $currentUserCustomAttributes = LookerAPI::getUserCustomAttributes($UserMapping->ExternalIdentifier);
         } else {
             $currentUserCustomAttributes = [];
         }
 
         if (!empty($currentUserCustomAttributes)) {
             foreach ($currentUserCustomAttributes as $lookerCustomAttribute) {
-                if (!array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
+                if (!isset($lookerCustomAttribute['name']) || !array_key_exists($lookerCustomAttribute['name'], $userCustomAttributes)) {
                     continue;
                 }
 
@@ -572,10 +597,9 @@ class Connector extends SAML2Connector implements ISynchronize
 
         if (empty($customAttributesToAdd)) {
             $logger->debug(
-                'User Custom Attributes verified',
+                'User Custom Attributes verified. ({remote})',
                 [
-                    'local' => $customAttributesToAdd,
-                    'remote' => $userCustomAttributes
+                    'remote' => !empty($currentUserCustomAttributes) ? join(' | ', array_map(function($c) { return "$c[name]: $c[value]"; }, $currentUserCustomAttributes)) : []
                 ]
             );
             return new SyncResult(
@@ -596,7 +620,6 @@ class Connector extends SAML2Connector implements ISynchronize
                 if (!$pretend) {
                     $lookerResponse = LookerAPI::updateUserCustomAttribute($lookerUser['id'], $customAttributeId, $customAttributeToAdd);
                     if ($lookerResponse['value'] != $customAttributeToAdd['value']) {
-                        \MICS::dump($lookerResponse, 'looker response');
                         $logger->error(
                             'Error updating user Custom Attribute {customAttributeName} => {customAttributeValue}',
                             [
@@ -631,6 +654,33 @@ class Connector extends SAML2Connector implements ISynchronize
         }
     }
 
+    protected static function getUsersFromJob(IJob $Job)
+    {
+        $userConditions = [];
+        if (!empty($Job->Config['pushSchools'])) {
+            $userConditions['ID'] = [
+                'values' => array_keys(
+                    SchoolUser::getAllByWhere([
+                        'SchoolID' => [
+                            'values' => $Job->Config['pushSchools'],
+                            'operator' => 'IN'
+                        ]
+                    ], [
+                        'indexField' => 'PersonID'
+                    ])
+                ),
+                'operator' => 'IN'
+            ];
+        }
+
+        return User::getAllByWhere(array_merge([
+            'AccountLevel' => [
+                'value' => 'Disabled',
+                'operator' => '!='
+            ]
+        ], $userConditions));
+    }
+
     // task handlers
     public static function pushUsers(IJob $Job, $pretend = true)
     {
@@ -645,7 +695,7 @@ class Connector extends SAML2Connector implements ISynchronize
         ];
 
         // iterate over Slate users
-        $UsersToSync = User::getAllByWhere('Username IS NOT NULL AND AccountLevel != "Disabled"');
+        $UsersToSync = static::getUsersFromJob($Job);
 
         foreach ($UsersToSync AS $User) {
             $Job->debug(
