@@ -1,9 +1,9 @@
 {extends designs/site.tpl}
 
-{block title}Push to Canvas &mdash; {$dwoo.parent}{/block}
+{block title}Push to Looker &mdash; {$dwoo.parent}{/block}
 
 {block content}
-    <h1>Push to Canvas</h1>
+    <h1>Push to Looker</h1>
 
     <h2>Input</h2>
     <h3>Run from template</h3>
