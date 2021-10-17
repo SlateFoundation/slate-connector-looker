@@ -1,9 +1,9 @@
 {extends designs/site.tpl}
 
-{block title}Push to Canvas &mdash; {$dwoo.parent}{/block}
+{block title}Push to Looker &mdash; {$dwoo.parent}{/block}
 
 {block content}
-    <h1>Push to Canvas</h1>
+    <h1>Push to Looker</h1>
 
     <h2>Input</h2>
     <h3>Run from template</h3>
@@ -54,6 +54,18 @@
                     <input name="clientSecret" {refill field=clientSecret} />
                 </label>
             </p>
+        </fieldset>
+
+        <fieldset>
+            <legend>Network Schools</legend>
+            {foreach from=\Slate\NetworkHub\School::getAll() item=School}
+                <p>
+                    <label>
+                        {$School->Handle} ({$School->Domain})
+                        <input type="checkbox" name="schools[]" value="{$School->ID}" {refill field=schools checked="true" default="false"}>
+                    </label>
+                </p>
+            {/foreach}
         </fieldset>
 
         <fieldset>
