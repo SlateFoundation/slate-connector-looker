@@ -694,6 +694,16 @@ class Connector extends SAML2Connector implements ISynchronize
             'verified' => 0
         ];
 
+        // get existing Looker users and index by email
+        $LookerUsers = LookerAPI::getAllUsers(['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
+
+        $LookerUsersMappedByEmail = [];
+        for ($i = 0; $i < count($LookerUsers); $i++) {
+            $LookerUser = $LookerUsers[$i];
+            $LookerUsersMappedByEmail[$LookerUser['email']] = $LookerUser;
+        }
+        unset($LookerUsers);
+
         // iterate over Slate users
         $UsersToSync = static::getUsersFromJob($Job);
 
@@ -708,6 +718,11 @@ class Connector extends SAML2Connector implements ISynchronize
             $results['analyzed']++;
 
             try {
+                // create a user mapping if looker user exists with same email
+                if (array_key_exists($User->Email, $LookerUsersMappedByEmail) && !static::getUserMapping($User)) {
+                    static::createUserMapping($User, $LookerUser['id']);
+                }
+
                 $syncResult = static::pushUser($User, $Job, $pretend);
 
                 if ($syncResult->getStatus() === SyncResult::STATUS_CREATED) {
