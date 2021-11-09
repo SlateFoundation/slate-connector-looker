@@ -56,6 +56,7 @@ class Connector extends SAML2Connector implements ISynchronize
         $config['clientSecret'] = $requestData['clientSecret'];
         $config['pushUsers'] = !empty($requestData['pushUsers']);
         $config['pushSchools'] = $requestData['schools'];
+        $config['pushStudents'] = !empty($requestData['pushStudents']);
 
         return $config;
     }
@@ -562,7 +563,7 @@ class Connector extends SAML2Connector implements ISynchronize
         }
 
         if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
-            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User, $School));
+            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User));
         }
 
         return $customAttributes;
@@ -657,15 +658,25 @@ class Connector extends SAML2Connector implements ISynchronize
     protected static function getUsersFromJob(IJob $Job)
     {
         $userConditions = [];
+        $schoolUserConditions = [];
+
+
+        if (empty($Job->Config['pushStudents'])) {
+            $schoolUserConditions['AccountType'] = [
+                'value' => 'Student',
+                'operator' => '!='
+            ];
+        }
+
         if (!empty($Job->Config['pushSchools'])) {
             $userConditions['ID'] = [
                 'values' => array_keys(
-                    SchoolUser::getAllByWhere([
+                    SchoolUser::getAllByWhere(array_merge([
                         'SchoolID' => [
                             'values' => $Job->Config['pushSchools'],
                             'operator' => 'IN'
                         ]
-                    ], [
+                    ], $schoolUserConditions), [
                         'indexField' => 'PersonID'
                     ])
                 ),
