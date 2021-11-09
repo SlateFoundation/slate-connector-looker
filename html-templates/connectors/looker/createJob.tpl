@@ -77,6 +77,13 @@
                 </label>
                 Check to push users to Looker
             </p>
+            <p>
+                <label>
+                    Push Students
+                    <input type="checkbox" name="pushStudents" value="true" {refill field=pushStudents checked="true" default="false"}>
+                </label>
+                Check to <b>include students accounts</b> when pushing to Looker. (Must be used with <b>Push Users</b>.)
+            </p>
         </fieldset>
 
 
