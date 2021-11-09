@@ -133,7 +133,7 @@ class Connector extends SAML2Connector implements ISynchronize
             );
 
             // check for any changes
-            $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
+            $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids,is_disabled']);
             if (isset($lookerUser['message']) && $lookerUser['message'] === 'Not found') {
                 throw new SyncException('Failed to find Looker User with ID '. $Mapping->ExternalIdentifier);
             }
@@ -151,6 +151,15 @@ class Connector extends SAML2Connector implements ISynchronize
                 $lookerUserChanges['last_name'] = [
                     'from' => $lookerUser['last_name'],
                     'to' => $User->LastName
+                ];
+            }
+
+            // sync slate "Disabled" account status with Looker
+            $slateUserDisabled = $User->AccountLevel == 'Disabled';
+            if ($lookerUser['is_disabled'] != $slateUserDisabled) {
+                $lookerUserChanges['is_disabled'] = [
+                    'from' => $lookerUser['is_disabled'],
+                    'to' => $slateUserDisabled
                 ];
             }
 
@@ -230,7 +239,7 @@ class Connector extends SAML2Connector implements ISynchronize
                 ]
             );
         } else { // try to create user if no mapping found
-            // skip accounts with no email
+            // skip disabled accounts and accounts with no email
             if (!$User->Email) {
                 $logger->debug(
                     'Skipping user {slateUsername} without Email',
@@ -242,6 +251,21 @@ class Connector extends SAML2Connector implements ISynchronize
                 return new SyncResult(
                     SyncResult::STATUS_SKIPPED,
                     'No email, skipping {slateUsername}',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+            } else if ($User->AccountLevel == 'Disabled') {
+                $logger->debug(
+                    'Skipping disabled user {slateUsername}',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+
+                return new SyncResult(
+                    SyncResult::STATUS_SKIPPED,
+                    'User Disabled, skipping {slateUsername}',
                     [
                         'slateUsername' => $User->Username
                     ]
