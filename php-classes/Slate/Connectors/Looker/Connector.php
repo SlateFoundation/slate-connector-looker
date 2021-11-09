@@ -56,6 +56,7 @@ class Connector extends SAML2Connector implements ISynchronize
         $config['clientSecret'] = $requestData['clientSecret'];
         $config['pushUsers'] = !empty($requestData['pushUsers']);
         $config['pushSchools'] = $requestData['schools'];
+        $config['pushStudents'] = !empty($requestData['pushStudents']);
 
         return $config;
     }
@@ -133,7 +134,7 @@ class Connector extends SAML2Connector implements ISynchronize
             );
 
             // check for any changes
-            $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
+            $lookerUser = LookerAPI::getUserById($Mapping->ExternalIdentifier, ['fields' => 'id,first_name,last_name,email,group_ids,role_ids,is_disabled']);
             if (isset($lookerUser['message']) && $lookerUser['message'] === 'Not found') {
                 throw new SyncException('Failed to find Looker User with ID '. $Mapping->ExternalIdentifier);
             }
@@ -151,6 +152,15 @@ class Connector extends SAML2Connector implements ISynchronize
                 $lookerUserChanges['last_name'] = [
                     'from' => $lookerUser['last_name'],
                     'to' => $User->LastName
+                ];
+            }
+
+            // sync slate "Disabled" account status with Looker
+            $slateUserDisabled = $User->AccountLevel == 'Disabled';
+            if ($lookerUser['is_disabled'] != $slateUserDisabled) {
+                $lookerUserChanges['is_disabled'] = [
+                    'from' => $lookerUser['is_disabled'],
+                    'to' => $slateUserDisabled
                 ];
             }
 
@@ -230,7 +240,7 @@ class Connector extends SAML2Connector implements ISynchronize
                 ]
             );
         } else { // try to create user if no mapping found
-            // skip accounts with no email
+            // skip disabled accounts and accounts with no email
             if (!$User->Email) {
                 $logger->debug(
                     'Skipping user {slateUsername} without Email',
@@ -242,6 +252,21 @@ class Connector extends SAML2Connector implements ISynchronize
                 return new SyncResult(
                     SyncResult::STATUS_SKIPPED,
                     'No email, skipping {slateUsername}',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+            } else if ($User->AccountLevel == 'Disabled') {
+                $logger->debug(
+                    'Skipping disabled user {slateUsername}',
+                    [
+                        'slateUsername' => $User->Username
+                    ]
+                );
+
+                return new SyncResult(
+                    SyncResult::STATUS_SKIPPED,
+                    'User Disabled, skipping {slateUsername}',
                     [
                         'slateUsername' => $User->Username
                     ]
@@ -562,7 +587,7 @@ class Connector extends SAML2Connector implements ISynchronize
         }
 
         if (isset(static::$customAttributesByUser) && is_callable(static::$customAttributesByUser)) {
-            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User, $School));
+            $customAttributes = array_merge($customAttributes, call_user_func(static::$customAttributesByUser, $User));
         }
 
         return $customAttributes;
@@ -657,15 +682,25 @@ class Connector extends SAML2Connector implements ISynchronize
     protected static function getUsersFromJob(IJob $Job)
     {
         $userConditions = [];
+        $schoolUserConditions = [];
+
+
+        if (empty($Job->Config['pushStudents'])) {
+            $schoolUserConditions['AccountType'] = [
+                'value' => 'Student',
+                'operator' => '!='
+            ];
+        }
+
         if (!empty($Job->Config['pushSchools'])) {
             $userConditions['ID'] = [
                 'values' => array_keys(
-                    SchoolUser::getAllByWhere([
+                    SchoolUser::getAllByWhere(array_merge([
                         'SchoolID' => [
                             'values' => $Job->Config['pushSchools'],
                             'operator' => 'IN'
                         ]
-                    ], [
+                    ], $schoolUserConditions), [
                         'indexField' => 'PersonID'
                     ])
                 ),
@@ -694,6 +729,16 @@ class Connector extends SAML2Connector implements ISynchronize
             'verified' => 0
         ];
 
+        // get existing Looker users and index by email
+        $LookerUsers = LookerAPI::getAllUsers(['fields' => 'id,first_name,last_name,email,group_ids,role_ids']);
+
+        $LookerUsersMappedByEmail = [];
+        for ($i = 0; $i < count($LookerUsers); $i++) {
+            $LookerUser = $LookerUsers[$i];
+            $LookerUsersMappedByEmail[$LookerUser['email']] = $LookerUser;
+        }
+        unset($LookerUsers);
+
         // iterate over Slate users
         $UsersToSync = static::getUsersFromJob($Job);
 
@@ -708,6 +753,11 @@ class Connector extends SAML2Connector implements ISynchronize
             $results['analyzed']++;
 
             try {
+                // create a user mapping if looker user exists with same email
+                if (array_key_exists($User->Email, $LookerUsersMappedByEmail) && !static::getUserMapping($User)) {
+                    static::createUserMapping($User, $LookerUser['id']);
+                }
+
                 $syncResult = static::pushUser($User, $Job, $pretend);
 
                 if ($syncResult->getStatus() === SyncResult::STATUS_CREATED) {
