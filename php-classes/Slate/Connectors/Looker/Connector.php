@@ -755,7 +755,7 @@ class Connector extends SAML2Connector implements ISynchronize
             try {
                 // create a user mapping if looker user exists with same email
                 if (array_key_exists($User->Email, $LookerUsersMappedByEmail) && !static::getUserMapping($User)) {
-                    static::createUserMapping($User, $LookerUser['id']);
+                    static::createUserMapping($User, $LookerUsersMappedByEmail[$User->Email]['id']);
                 }
 
                 $syncResult = static::pushUser($User, $Job, $pretend);
